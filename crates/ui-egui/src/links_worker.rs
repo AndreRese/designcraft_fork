@@ -7,6 +7,7 @@
 mod native {
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
     use std::{hash::Hash, hash::Hasher};
 
@@ -18,6 +19,12 @@ mod native {
     // Network metadata for a document with hundreds of links can itself take seconds. Document
     // edits change the key and refresh immediately; external-only changes are polled less often.
     const REFRESH_AFTER: Duration = Duration::from_secs(5 * 60);
+    // A check for another document still running after this long is likely stuck on an unreachable
+    // share: the document now shown gets a fresh worker instead of waiting behind it.
+    const SUPERSEDE_AFTER: Duration = Duration::from_millis(200);
+    // Workers alive at once, counting superseded ones still blocked in a filesystem call. Switching
+    // documents while a share is down can't pile up threads beyond this.
+    const MAX_WORKERS: usize = 4;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) struct Key {
@@ -66,6 +73,16 @@ mod native {
     }
 
     type Runner = Box<dyn FnMut(&Snapshot, &mut LinkListChecks) -> Vec<Value> + Send>;
+    type Spawn = Box<dyn Fn(egui::Context, Arc<AtomicUsize>) -> Option<Worker> + Send + Sync>;
+
+    /// Counts a worker thread as alive until it ends, however it ends.
+    struct Alive(Arc<AtomicUsize>);
+
+    impl Drop for Alive {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 
     struct Worker {
         tx: std::sync::mpsc::Sender<Job>,
@@ -73,9 +90,10 @@ mod native {
     }
 
     impl Worker {
-        fn spawn(ctx: egui::Context) -> Option<Self> {
+        fn spawn(ctx: egui::Context, live: Arc<AtomicUsize>) -> Option<Self> {
             Self::spawn_with_preview(
                 ctx,
+                live,
                 Some(Box::new(|snapshot, _| {
                     designcraft_engine::cmd::preview_document_links(&snapshot.doc, &snapshot.cache, snapshot.document.as_deref())
                 })),
@@ -87,15 +105,18 @@ mod native {
 
         #[cfg(test)]
         fn spawn_with(ctx: egui::Context, run: Runner) -> Option<Self> {
-            Self::spawn_with_preview(ctx, None, run)
+            Self::spawn_with_preview(ctx, Arc::default(), None, run)
         }
 
-        fn spawn_with_preview(ctx: egui::Context, mut preview: Option<Runner>, mut run: Runner) -> Option<Self> {
+        fn spawn_with_preview(ctx: egui::Context, live: Arc<AtomicUsize>, mut preview: Option<Runner>, mut run: Runner) -> Option<Self> {
             let (tx, jobs) = std::sync::mpsc::channel::<Job>();
             let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
+            live.fetch_add(1, Ordering::Relaxed);
+            let alive = Alive(live);
             std::thread::Builder::new()
                 .name("designcraft-links".into())
                 .spawn(move || {
+                    let _alive = alive;
                     let mut checks = LinkListChecks::default();
                     while let Ok(job) = jobs.recv() {
                         if let Some(preview) = &mut preview {
@@ -139,26 +160,31 @@ mod native {
         complete: bool,
     }
 
+    #[derive(Clone, Copy)]
+    struct InFlight {
+        token: u64,
+        key: Key,
+        started: Instant,
+    }
+
     #[derive(Default)]
     pub(crate) struct State {
         worker: Option<Worker>,
         worker_failed: bool,
         next_token: u64,
-        in_flight: Option<(u64, Key)>,
+        in_flight: Option<InFlight>,
         cached: Option<Cached>,
+        live: Arc<AtomicUsize>,
+        /// How workers are started; `None` is [`Worker::spawn`].
+        spawn: Option<Spawn>,
     }
 
     impl State {
         pub(crate) fn rows(&mut self, ctx: &egui::Context, snapshot: Snapshot) -> Rows {
             let current_key = snapshot.key;
-            if self.worker.is_none() && !self.worker_failed {
-                self.worker = Worker::spawn(ctx.clone());
-                self.worker_failed = self.worker.is_none();
-            }
-
             match self.worker.as_ref().map(Worker::poll) {
                 Some(Poll::Done(done)) => {
-                    if done.complete && self.in_flight.is_some_and(|(token, _)| token == done.token) {
+                    if done.complete && self.in_flight.is_some_and(|job| job.token == done.token) {
                         self.in_flight = None;
                     }
                     let has_completed_rows = self.cached.as_ref().is_some_and(|cached| cached.key.uid == done.key.uid && cached.complete);
@@ -175,13 +201,30 @@ mod native {
                 Some(Poll::Empty) | None => {}
             }
 
+            // A single worker can't take the next job while a filesystem call for another document
+            // is blocked. Leave that worker to finish on its own (its result is dropped with its
+            // channel) so the document now shown gets its rows from a fresh one.
+            let superseded = self.in_flight.is_some_and(|job| job.key.uid != current_key.uid && job.started.elapsed() >= SUPERSEDE_AFTER);
+            if superseded && self.live.load(Ordering::Relaxed) < MAX_WORKERS {
+                self.worker = None;
+                self.in_flight = None;
+            }
+            if self.worker.is_none() && !self.worker_failed {
+                let live = Arc::clone(&self.live);
+                self.worker = match &self.spawn {
+                    Some(spawn) => spawn(ctx.clone(), live),
+                    None => Worker::spawn(ctx.clone(), live),
+                };
+                self.worker_failed = self.worker.is_none();
+            }
+
             let needs_refresh = self.cached.as_ref().is_none_or(|cached| cached.key != current_key || cached.refreshed.elapsed() >= REFRESH_AFTER);
             if needs_refresh && self.in_flight.is_none() && !self.worker_failed {
                 self.next_token = self.next_token.wrapping_add(1);
                 let token = self.next_token;
                 let key = snapshot.key;
                 if self.worker.as_ref().is_some_and(|worker| worker.submit(Job { token, snapshot })) {
-                    self.in_flight = Some((token, key));
+                    self.in_flight = Some(InFlight { token, key, started: Instant::now() });
                 } else {
                     self.worker = None;
                     self.worker_failed = true;
@@ -301,6 +344,7 @@ mod native {
             });
             let worker = Worker::spawn_with_preview(
                 ctx.clone(),
+                Arc::default(),
                 Some(Box::new(move |_, _| {
                     let _ = previewed_tx.send(());
                     vec![serde_json::json!({"name": "preview", "status": "checking"})]
@@ -362,6 +406,66 @@ mod native {
             assert!(rows.checking);
             assert!(started, "changed document content starts a refresh");
             assert_eq!(rows.values.first().and_then(|value| value["name"].as_str()), Some("cached"));
+        }
+
+        #[test]
+        fn a_blocked_check_for_another_document_does_not_gate_the_active_one() {
+            let ctx = egui::Context::default();
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+            let watchdog = release_tx.clone();
+            let _watchdog = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(2));
+                let _ = watchdog.send(());
+            });
+            let spawn: Spawn = Box::new(move |ctx, live| {
+                let release_rx = Arc::clone(&release_rx);
+                Worker::spawn_with_preview(
+                    ctx,
+                    live,
+                    None,
+                    Box::new(move |snapshot, _| {
+                        // Document 1's links are on a share that doesn't answer.
+                        if snapshot.key.uid == 1 {
+                            let _ = release_rx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).recv();
+                        }
+                        vec![serde_json::json!({"name": format!("doc {}", snapshot.key.uid)})]
+                    }),
+                )
+            });
+            let mut state = State { spawn: Some(spawn), ..Default::default() };
+
+            assert!(state.rows(&ctx, snapshot(key(1, 1))).checking);
+            std::thread::sleep(SUPERSEDE_AFTER);
+            let mut rows = state.rows(&ctx, snapshot(key(2, 1)));
+            for _ in 0..500 {
+                if !rows.checking {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+                rows = state.rows(&ctx, snapshot(key(2, 1)));
+            }
+            let _ = release_tx.send(());
+
+            assert!(!rows.checking, "document 2 waited behind document 1's blocked check");
+            assert_eq!(rows.values.first().and_then(|value| value["name"].as_str()), Some("doc 2"));
+        }
+
+        #[test]
+        fn superseded_workers_are_bounded() {
+            let ctx = egui::Context::default();
+            let worker = Worker::spawn_with(ctx.clone(), Box::new(|_, _| Vec::new())).unwrap();
+            let mut state = State {
+                worker: Some(worker),
+                in_flight: Some(InFlight { token: 7, key: key(1, 1), started: Instant::now() - SUPERSEDE_AFTER }),
+                live: Arc::new(AtomicUsize::new(MAX_WORKERS)),
+                ..Default::default()
+            };
+
+            let rows = state.rows(&ctx, snapshot(key(2, 1)));
+
+            assert!(rows.checking);
+            assert_eq!(state.in_flight.map(|job| job.token), Some(7), "at the limit the active document waits instead");
         }
     }
 }

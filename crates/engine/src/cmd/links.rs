@@ -549,7 +549,7 @@ fn reload(path: impl AsRef<Path>) -> Result<(Vec<u8>, (u32, u32))> {
 /// Relink passes the file the user chose as both. Update passes the path the stored link resolved
 /// to and the stored link itself, so refreshing a link never rewrites what the document holds.
 fn relinked_asset(a: &designcraft_doc::Asset, read: &Path, link: &str) -> Result<Arc<designcraft_doc::Asset>> {
-    let link_fingerprint = crate::io::metadata(read).ok().map(|m| super::datamerge::fingerprint_from(&m));
+    let link_fingerprint = super::datamerge::fingerprint_of(read);
     let (bytes, px) = reload(read)?;
     let page = if designcraft_render::is_pdf(&bytes) { a.page } else { 0 };
     let px = if page > 0 {
@@ -980,7 +980,7 @@ mod tests {
         assert_eq!(a.pixels, Some((60, 20)));
         assert_eq!(a.mime, "application/postscript");
         assert_eq!(a.data.as_slice(), eps(30).as_bytes());
-        let moved = dir.join("new/replacement.eps");
+        let moved = dir.join("new").join("replacement.eps");
         std::fs::rename(&replacement, &moved).unwrap();
         assert_eq!(s.execute("links.relinkFolder", &json!({"dir": dir.join("new").to_string_lossy()})).unwrap()["relinked"], 1);
         assert_eq!(s.doc().unwrap().doc.assets[&aid].link.as_deref(), moved.to_str());

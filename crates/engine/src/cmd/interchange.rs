@@ -522,8 +522,13 @@ mod tests {
         for link in links {
             let (idml, _) = linked_idml(link, false).unwrap();
             let (doc, seen) = crate::io::touched(|| import(&idml, Some(&package)).unwrap());
-            // Beside the package, and the link itself where it is on this computer.
-            assert!(seen.iter().all(|p| p.starts_with(&dir) || p == std::path::Path::new(link)), "{link}: {seen:?}");
+            // Beside the package, and the link itself where it is on this computer (on Windows,
+            // `/dev/zero` is `\dev\zero` on the current drive).
+            let itself = Some(std::path::Path::new(link))
+                .filter(|l| l.has_root())
+                .and_then(|l| std::path::absolute(l).ok())
+                .unwrap_or_else(|| std::path::PathBuf::from(link));
+            assert!(seen.iter().all(|p| p.starts_with(&dir) || p == std::path::Path::new(link) || *p == itself), "{link}: {seen:?}");
             let asset = doc.assets.values().next().unwrap();
             assert!(asset.data.is_empty(), "{link}");
             assert_eq!(super::super::links::status(asset, None), "missing", "{link}");
