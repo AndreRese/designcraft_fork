@@ -371,7 +371,7 @@ pub struct Session {
     pub(crate) new_document_preview: Option<(u64, Option<u64>)>,
     /// Linked text files checked by the Links panel: path → the size and modification time the
     /// file had and the hash of its contents then, so a file touched but not changed is read once.
-    pub(crate) text_link_checks: std::collections::HashMap<String, (designcraft_doc::Fingerprint, String)>,
+    pub(crate) text_link_checks: cmd::LinkListChecks,
 }
 
 impl Default for Session {

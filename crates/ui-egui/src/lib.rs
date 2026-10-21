@@ -25,6 +25,7 @@ mod panel_docking;
 pub mod panels;
 mod prefs;
 pub mod render_worker;
+mod links_worker;
 mod rtl;
 mod section_options;
 pub mod story_editor;
@@ -558,6 +559,9 @@ pub struct DesignApp {
     pub views: HashMap<u64, View>,
     /// The canvas cache and rect of the pane in `pane` (the other pane's are in `other_pane`).
     pub canvas: CanvasCache,
+    /// Native link checks run separately because an unavailable network share may block for an
+    /// operating-system timeout.
+    pub(crate) links_worker: links_worker::State,
     pub canvas_rect: Option<egui::Rect>,
     /// Window › Arrange › Split Window: two views of the document side by side.
     pub split: bool,
@@ -660,6 +664,7 @@ impl DesignApp {
             services,
             views: HashMap::new(),
             canvas: CanvasCache::new(),
+            links_worker: links_worker::State::default(),
             canvas_rect: None,
             split: false,
             second_window: false,

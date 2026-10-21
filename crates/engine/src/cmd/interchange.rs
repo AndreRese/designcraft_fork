@@ -99,7 +99,10 @@ fn import_report_with_previews(
         for asset in document.assets.values_mut() {
             if let Some(path) = asset.link.as_ref().and_then(|link| resolved.borrow().get(link).cloned()) {
                 // Relocated packages must also use the new path for preflight and link updates.
-                std::sync::Arc::make_mut(asset).link = Some(path);
+                let fingerprint = crate::io::metadata(&path).ok().map(|m| super::datamerge::fingerprint_from(&m));
+                let asset = std::sync::Arc::make_mut(asset);
+                asset.link = Some(path);
+                asset.link_fingerprint = fingerprint;
             }
         }
         resolve_packaged_links(&mut document, package);

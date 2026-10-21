@@ -659,7 +659,17 @@ fn file_place(s: &mut Session, p: &Value) -> Result<Value> {
         _ => PdfCrop::Crop,
     };
     let mime = designcraft_render::image_mime(&bytes).to_string();
-    let mut asset = Asset { page: pdf_page, name, mime, link, data: Arc::new(bytes), pixels: Some((pw, ph)), pdf_crop, ..Default::default() };
+    let mut asset = Asset {
+        page: pdf_page,
+        name,
+        mime,
+        link,
+        link_fingerprint: before,
+        data: Arc::new(bytes),
+        pixels: Some((pw, ph)),
+        pdf_crop,
+        ..Default::default()
+    };
     // The graphic's natural size: the box in points (the whole page when the box can't be found,
     // and then the document says so).
     let (bw, bh) = match crop_pdf(&mut asset) {
@@ -840,7 +850,8 @@ fn place_load(s: &mut Session, p: &Value) -> Result<Value> {
     let (pw, ph) = designcraft_render::image_size(&bytes).ok_or_else(|| bad("place.load", "unsupported or corrupt image"))?;
     let natural = eps_size(&bytes, "place.load")?.or_else(|| designcraft_render::natural_size(&bytes, 0)).unwrap_or((pw as f64, ph as f64));
     let mime = designcraft_render::image_mime(&bytes).to_string();
-    let asset = Asset { name, mime, link, data: Arc::new(bytes), pixels: Some((pw, ph)), ..Default::default() };
+    let link_fingerprint = link.as_deref().and_then(super::datamerge::fingerprint_from_path);
+    let asset = Asset { name, mime, link, link_fingerprint, data: Arc::new(bytes), pixels: Some((pw, ph)), ..Default::default() };
     load_cursor(s, asset, natural)
 }
 
