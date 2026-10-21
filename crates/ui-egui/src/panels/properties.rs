@@ -2968,12 +2968,12 @@ mod tests {
     fn settle_links(h: &mut Harness<'static, DesignApp>) {
         for _ in 0..500 {
             h.run_steps(1);
-            if h.query_by_label("Checking links...").is_none() {
+            if !h.state().links_worker.checking() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        assert!(h.query_by_label("Checking links...").is_none(), "the background link check did not finish");
+        assert!(!h.state().links_worker.checking(), "the background link check did not finish");
     }
 
     /// With the caret in text, the Stroke panel offers the text's stroke options, not an empty panel.

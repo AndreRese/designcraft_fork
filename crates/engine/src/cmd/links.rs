@@ -428,8 +428,7 @@ fn list_document_links_mode(d: &Document, cache: &Cache, document: Option<&Path>
         .values()
         .filter_map(|st| {
             let l = st.file_link.as_ref()?;
-            let uses: Vec<Value> =
-                st.frames.iter().map(|id| json!({"id": id.0, "page": d.page_of_item(*id).map(|p| d.page_name(p))})).collect();
+            let uses: Vec<Value> = st.frames.iter().map(|id| json!({"id": id.0, "page": d.page_of_item(*id).map(|p| d.page_name(p))})).collect();
             let why = refused(&l.path, document).map(|reason| reason.to_string());
             let status = match &mut mode {
                 LinkStatusMode::Preview if why.is_some() => "missing",

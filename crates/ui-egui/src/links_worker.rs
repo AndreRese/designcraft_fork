@@ -80,12 +80,7 @@ mod native {
                     designcraft_engine::cmd::preview_document_links(&snapshot.doc, &snapshot.cache, snapshot.document.as_deref())
                 })),
                 Box::new(|snapshot, checks| {
-                    designcraft_engine::cmd::list_document_links(
-                        &snapshot.doc,
-                        &snapshot.cache,
-                        snapshot.document.as_deref(),
-                        checks,
-                    )
+                    designcraft_engine::cmd::list_document_links(&snapshot.doc, &snapshot.cache, snapshot.document.as_deref(), checks)
                 }),
             )
         }
@@ -141,6 +136,7 @@ mod native {
         key: Key,
         refreshed: Instant,
         values: Arc<Vec<Value>>,
+        complete: bool,
     }
 
     #[derive(Default)]
@@ -165,8 +161,10 @@ mod native {
                     if done.complete && self.in_flight.is_some_and(|(token, _)| token == done.token) {
                         self.in_flight = None;
                     }
-                    if done.key == current_key {
-                        self.cached = Some(Cached { key: done.key, refreshed: Instant::now(), values: Arc::new(done.values) });
+                    let has_completed_rows = self.cached.as_ref().is_some_and(|cached| cached.key.uid == done.key.uid && cached.complete);
+                    if done.key == current_key && (done.complete || !has_completed_rows) {
+                        self.cached =
+                            Some(Cached { key: done.key, refreshed: Instant::now(), values: Arc::new(done.values), complete: done.complete });
                     }
                 }
                 Some(Poll::Disconnected) => {
@@ -196,12 +194,18 @@ mod native {
                 .filter(|cached| cached.key.uid == current_key.uid)
                 .map_or_else(|| Arc::new(Vec::new()), |cached| Arc::clone(&cached.values));
             let checking = self.in_flight.is_some();
-            if !checking && !self.worker_failed
+            if !checking
+                && !self.worker_failed
                 && let Some(cached) = self.cached.as_ref().filter(|cached| cached.key == current_key)
             {
                 ctx.request_repaint_after(REFRESH_AFTER.saturating_sub(cached.refreshed.elapsed()));
             }
             Rows { values, checking, unavailable: self.worker_failed }
+        }
+
+        #[cfg(test)]
+        pub(crate) fn checking(&self) -> bool {
+            self.in_flight.is_some()
         }
     }
 
@@ -210,12 +214,7 @@ mod native {
         use super::*;
 
         fn snapshot(key: Key) -> Snapshot {
-            Snapshot {
-                key,
-                doc: Arc::new(Document::new(&Default::default())),
-                cache: Arc::new(Cache::new()),
-                document: None,
-            }
+            Snapshot { key, doc: Arc::new(Document::new(&Default::default())), cache: Arc::new(Cache::new()), document: None }
         }
 
         fn key(uid: u64, document: usize) -> Key {
@@ -277,7 +276,7 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_AFTER, values }),
+                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_AFTER, values, complete: true }),
                 ..Default::default()
             };
 
@@ -288,6 +287,46 @@ mod native {
             assert!(rows.checking);
             assert!(started, "the refresh starts on the worker");
             assert_eq!(rows.values.first().and_then(|value| value["name"].as_str()), Some("cached"));
+        }
+
+        #[test]
+        fn preview_does_not_replace_completed_rows_during_a_refresh() {
+            let ctx = egui::Context::default();
+            let (previewed_tx, previewed_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let watchdog = release_tx.clone();
+            let _watchdog = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(1));
+                let _ = watchdog.send(());
+            });
+            let worker = Worker::spawn_with_preview(
+                ctx.clone(),
+                Some(Box::new(move |_, _| {
+                    let _ = previewed_tx.send(());
+                    vec![serde_json::json!({"name": "preview", "status": "checking"})]
+                })),
+                Box::new(move |_, _| {
+                    let _ = release_rx.recv();
+                    vec![serde_json::json!({"name": "fresh", "status": "ok"})]
+                }),
+            )
+            .unwrap();
+            let key = key(1, 1);
+            let values = Arc::new(vec![serde_json::json!({"name": "cached", "status": "ok"})]);
+            let mut state = State {
+                worker: Some(worker),
+                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_AFTER, values, complete: true }),
+                ..Default::default()
+            };
+
+            assert_eq!(state.rows(&ctx, snapshot(key)).values[0]["name"], "cached");
+            assert!(previewed_rx.recv_timeout(Duration::from_secs(1)).is_ok(), "the worker sent its preview");
+            let rows = state.rows(&ctx, snapshot(key));
+            let _ = release_tx.send(());
+
+            assert!(rows.checking);
+            assert_eq!(rows.values[0]["name"], "cached", "a preview must not replace completed status rows");
+            assert_eq!(rows.values[0]["status"], "ok");
         }
 
         #[test]
@@ -312,7 +351,7 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key: key(1, 1), refreshed: Instant::now(), values }),
+                cached: Some(Cached { key: key(1, 1), refreshed: Instant::now(), values, complete: true }),
                 ..Default::default()
             };
 
