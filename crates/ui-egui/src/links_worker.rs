@@ -204,10 +204,17 @@ mod native {
             // A single worker can't take the next job while a filesystem call for another document
             // is blocked. Leave that worker to finish on its own (its result is dropped with its
             // channel) so the document now shown gets its rows from a fresh one.
-            let superseded = self.in_flight.is_some_and(|job| job.key.uid != current_key.uid && job.started.elapsed() >= SUPERSEDE_AFTER);
-            if superseded && self.live.load(Ordering::Relaxed) < MAX_WORKERS {
-                self.worker = None;
-                self.in_flight = None;
+            if let Some(job) = self.in_flight.filter(|job| job.key.uid != current_key.uid)
+                && self.live.load(Ordering::Relaxed) < MAX_WORKERS
+            {
+                let elapsed = job.started.elapsed();
+                if elapsed >= SUPERSEDE_AFTER {
+                    self.worker = None;
+                    self.in_flight = None;
+                } else {
+                    // A blocked worker never asks for a repaint, so come back when it can be replaced.
+                    ctx.request_repaint_after(SUPERSEDE_AFTER.saturating_sub(elapsed));
+                }
             }
             if self.worker.is_none() && !self.worker_failed {
                 let live = Arc::clone(&self.live);
@@ -449,6 +456,24 @@ mod native {
 
             assert!(!rows.checking, "document 2 waited behind document 1's blocked check");
             assert_eq!(rows.values.first().and_then(|value| value["name"].as_str()), Some("doc 2"));
+        }
+
+        #[test]
+        fn a_switch_before_the_takeover_is_due_schedules_a_repaint_for_it() {
+            let ctx = egui::Context::default();
+            let delays = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let seen = Arc::clone(&delays);
+            ctx.set_request_repaint_callback(move |info| seen.lock().unwrap().push(info.delay));
+            let worker = Worker::spawn_with(ctx.clone(), Box::new(|_, _| Vec::new())).unwrap();
+            let mut state =
+                State { worker: Some(worker), in_flight: Some(InFlight { token: 7, key: key(1, 1), started: Instant::now() }), ..Default::default() };
+
+            let rows = state.rows(&ctx, snapshot(key(2, 1)));
+
+            assert!(rows.checking);
+            assert_eq!(state.in_flight.map(|job| job.token), Some(7), "not replaced before it is due");
+            let delays = delays.lock().unwrap();
+            assert!(delays.iter().any(|delay| *delay <= SUPERSEDE_AFTER), "no repaint scheduled for the takeover: {delays:?}");
         }
 
         #[test]

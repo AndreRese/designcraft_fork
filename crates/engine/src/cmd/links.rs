@@ -333,7 +333,9 @@ fn cached_status_with(
         let status = match read(&path, a.data.len() as u64) {
             Ok(bytes) if bytes == *a.data => "ok",
             Ok(_) => "modified",
-            Err(_) => "missing",
+            // Not remembered: a read that failed (a share dropping mid-read) is tried again on the
+            // next check even though the file's size and time stay the same.
+            Err(_) => return "missing",
         };
         if settled(&now) {
             checks.graphics.insert(key, GraphicCheck { data: Arc::downgrade(&a.data), file: now, status });
@@ -749,6 +751,33 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_graphic_read_is_retried_on_the_next_check() {
+        let dir = std::env::temp_dir().join(format!("dc-link-retry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("graphic.bin");
+        std::fs::write(&path, b"same").unwrap();
+        // Settled, so a result would be remembered for this size and time.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        let asset = designcraft_doc::Asset {
+            id: AssetId(1),
+            name: "graphic.bin".into(),
+            mime: "application/octet-stream".into(),
+            link: Some(path.to_string_lossy().into_owned()),
+            data: Arc::new(b"same".to_vec()),
+            ..Default::default()
+        };
+        let mut checks = LinkListChecks::default();
+
+        let failed = cached_status_with(&asset, &mut checks, None, |_, _| Err(std::io::Error::other("the share went away")));
+        let retried = cached_status_with(&asset, &mut checks, None, |_, _| Ok(b"same".to_vec()));
+
+        assert_eq!((failed, retried), ("missing", "ok"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_settled_loaded_fingerprint_avoids_reading_link_bytes() {
         let loaded = Fingerprint { size: 1_096_990, mtime: 1_650_463_603 };
         assert_eq!(fingerprint_status(Some(loaded), loaded), Some("ok"));
@@ -890,6 +919,8 @@ mod tests {
         let proxy = designcraft_images::eps_proxy(source).unwrap().0;
         s.edit(|d, _| {
             let a = Arc::make_mut(d.assets.get_mut(&aid).unwrap());
+            // Documents from before source fingerprints have none.
+            a.link_fingerprint = None;
             a.data = Arc::new(proxy);
             a.mime = "image/png".into();
             Ok(())
