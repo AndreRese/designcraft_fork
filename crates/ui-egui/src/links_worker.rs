@@ -16,9 +16,12 @@ mod native {
     use designcraft_engine::cmd::LinkListChecks;
     use serde_json::Value;
 
-    // Network metadata for a document with hundreds of links can itself take seconds. Document
-    // edits change the key and refresh immediately; external-only changes are polled less often.
-    const REFRESH_AFTER: Duration = Duration::from_secs(5 * 60);
+    // Document edits change the key and refresh immediately. External changes (a file restored or
+    // edited elsewhere) are polled: an unchanged link costs one metadata call, but on a slow share
+    // with hundreds of links a check can itself take seconds, so the next one waits at least as
+    // long as the last took and the worker is idle at least half the time.
+    const REFRESH_MIN: Duration = Duration::from_secs(2);
+    const REFRESH_MAX: Duration = Duration::from_secs(5 * 60);
     // A check for another document still running after this long is likely stuck on an unreachable
     // share: the document now shown gets a fresh worker instead of waiting behind it.
     const SUPERSEDE_AFTER: Duration = Duration::from_millis(200);
@@ -153,9 +156,15 @@ mod native {
         }
     }
 
+    /// How long completed rows stay current after a check that took `took`.
+    fn refresh_after(took: Duration) -> Duration {
+        took.clamp(REFRESH_MIN, REFRESH_MAX)
+    }
+
     struct Cached {
         key: Key,
         refreshed: Instant,
+        refresh_after: Duration,
         values: Arc<Vec<Value>>,
         complete: bool,
     }
@@ -184,13 +193,22 @@ mod native {
             let current_key = snapshot.key;
             match self.worker.as_ref().map(Worker::poll) {
                 Some(Poll::Done(done)) => {
-                    if done.complete && self.in_flight.is_some_and(|job| job.token == done.token) {
+                    let mut took = Duration::ZERO;
+                    if done.complete
+                        && let Some(job) = self.in_flight.filter(|job| job.token == done.token)
+                    {
+                        took = job.started.elapsed();
                         self.in_flight = None;
                     }
                     let has_completed_rows = self.cached.as_ref().is_some_and(|cached| cached.key.uid == done.key.uid && cached.complete);
                     if done.key == current_key && (done.complete || !has_completed_rows) {
-                        self.cached =
-                            Some(Cached { key: done.key, refreshed: Instant::now(), values: Arc::new(done.values), complete: done.complete });
+                        self.cached = Some(Cached {
+                            key: done.key,
+                            refreshed: Instant::now(),
+                            refresh_after: refresh_after(took),
+                            values: Arc::new(done.values),
+                            complete: done.complete,
+                        });
                     }
                 }
                 Some(Poll::Disconnected) => {
@@ -225,7 +243,8 @@ mod native {
                 self.worker_failed = self.worker.is_none();
             }
 
-            let needs_refresh = self.cached.as_ref().is_none_or(|cached| cached.key != current_key || cached.refreshed.elapsed() >= REFRESH_AFTER);
+            let needs_refresh =
+                self.cached.as_ref().is_none_or(|cached| cached.key != current_key || cached.refreshed.elapsed() >= cached.refresh_after);
             if needs_refresh && self.in_flight.is_none() && !self.worker_failed {
                 self.next_token = self.next_token.wrapping_add(1);
                 let token = self.next_token;
@@ -248,7 +267,7 @@ mod native {
                 && !self.worker_failed
                 && let Some(cached) = self.cached.as_ref().filter(|cached| cached.key == current_key)
             {
-                ctx.request_repaint_after(REFRESH_AFTER.saturating_sub(cached.refreshed.elapsed()));
+                ctx.request_repaint_after(cached.refresh_after.saturating_sub(cached.refreshed.elapsed()));
             }
             Rows { values, checking, unavailable: self.worker_failed }
         }
@@ -326,7 +345,7 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_AFTER, values, complete: true }),
+                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_MIN, refresh_after: REFRESH_MIN, values, complete: true }),
                 ..Default::default()
             };
 
@@ -366,7 +385,7 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached", "status": "ok"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_AFTER, values, complete: true }),
+                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_MIN, refresh_after: REFRESH_MIN, values, complete: true }),
                 ..Default::default()
             };
 
@@ -402,7 +421,7 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key: key(1, 1), refreshed: Instant::now(), values, complete: true }),
+                cached: Some(Cached { key: key(1, 1), refreshed: Instant::now(), refresh_after: REFRESH_MIN, values, complete: true }),
                 ..Default::default()
             };
 
@@ -474,6 +493,27 @@ mod native {
             assert_eq!(state.in_flight.map(|job| job.token), Some(7), "not replaced before it is due");
             let delays = delays.lock().unwrap();
             assert!(delays.iter().any(|delay| *delay <= SUPERSEDE_AFTER), "no repaint scheduled for the takeover: {delays:?}");
+        }
+
+        #[test]
+        fn external_changes_are_polled_within_seconds_and_slow_checks_space_out() {
+            assert_eq!(refresh_after(Duration::from_millis(30)), REFRESH_MIN, "a quick check is repeated after two seconds");
+            assert_eq!(refresh_after(Duration::from_secs(4)), Duration::from_secs(4), "a slow share is idle as long as it was busy");
+            assert_eq!(refresh_after(Duration::from_secs(3600)), REFRESH_MAX);
+        }
+
+        #[test]
+        fn completed_rows_are_checked_again_after_the_refresh_interval() {
+            let ctx = egui::Context::default();
+            let worker = Worker::spawn_with(ctx.clone(), Box::new(|_, _| Vec::new())).unwrap();
+            let key = key(1, 1);
+            let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
+            let fresh = |refreshed| Cached { key, refreshed, refresh_after: REFRESH_MIN, values: Arc::clone(&values), complete: true };
+            let mut state = State { worker: Some(worker), cached: Some(fresh(Instant::now())), ..Default::default() };
+            assert!(!state.rows(&ctx, snapshot(key)).checking, "rows just checked are current");
+
+            state.cached = Some(fresh(Instant::now() - REFRESH_MIN));
+            assert!(state.rows(&ctx, snapshot(key)).checking, "an external change shows within the interval");
         }
 
         #[test]

@@ -228,14 +228,16 @@ pub struct LinkListChecks {
     graphics: std::collections::HashMap<(String, usize), GraphicCheck>,
 }
 
-/// Status known from the fingerprint captured when the linked bytes were loaded. A very recent
-/// equal timestamp is not trusted yet: another same-size write in that second must still be
-/// detected by the byte comparison.
+/// Status known from the fingerprint captured when the linked bytes were loaded. Only a new size
+/// is conclusive: a file saved again unchanged, or copied, restored or checked out with a new
+/// time, is compared byte for byte (once per new time, `checks`) and stays OK. A very recent equal
+/// timestamp is not trusted yet: another same-size write in that second must still be detected by
+/// the byte comparison.
 #[cfg(not(target_arch = "wasm32"))]
 fn fingerprint_status(loaded: Option<Fingerprint>, now: Fingerprint) -> Option<&'static str> {
     match loaded {
-        Some(loaded) if loaded != now => Some("modified"),
-        Some(_) if settled(&now) => Some("ok"),
+        Some(loaded) if loaded.size != now.size => Some("modified"),
+        Some(loaded) if loaded == now && settled(&now) => Some("ok"),
         _ => None,
     }
 }
@@ -783,6 +785,41 @@ mod tests {
         assert_eq!(fingerprint_status(Some(loaded), loaded), Some("ok"));
         assert_eq!(fingerprint_status(Some(loaded), Fingerprint { size: loaded.size + 1, ..loaded }), Some("modified"));
         assert_eq!(fingerprint_status(None, loaded), None, "legacy assets still need a byte comparison");
+        assert_eq!(fingerprint_status(Some(loaded), Fingerprint { mtime: loaded.mtime + 60, ..loaded }), None, "a new time alone is compared");
+    }
+
+    #[test]
+    fn a_graphic_rewritten_with_the_same_bytes_stays_ok() {
+        let dir = std::env::temp_dir().join(format!("dc-link-touched-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("logo.png");
+        let png = designcraft_render::Rendered { width: 2, height: 2, pixels: vec![255; 16] }.to_png();
+        std::fs::write(&path, &png).unwrap();
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("file.place", &json!({"path": path.to_string_lossy()})).unwrap();
+        // Copied, restored or checked out again: the same bytes with another (settled) time.
+        let touch = |bytes: &[u8], age: u64| {
+            std::fs::write(&path, bytes).unwrap();
+            let old = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+            std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        };
+        touch(&png, 60);
+        let a = s.doc().unwrap().doc.assets.values().next().unwrap().clone();
+        let mut checks = LinkListChecks::default();
+        assert_eq!(status(&a, None), "ok");
+        assert_eq!(cached_status(&a, &mut checks, None), "ok");
+        assert_eq!(s.execute("links.list", &json!({})).unwrap()[0]["status"], "ok");
+
+        let mut changed = png.clone();
+        if let Some(last) = changed.last_mut() {
+            *last ^= 0xff;
+        }
+        touch(&changed, 120);
+        assert_eq!(status(&a, None), "modified");
+        assert_eq!(cached_status(&a, &mut checks, None), "modified", "a time not seen before is compared again");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
