@@ -177,10 +177,11 @@ pub fn status(a: &designcraft_doc::Asset, document: Option<&Path>) -> &'static s
         if let Some(status) = fingerprint_status(a.link_fingerprint, now) {
             return status;
         }
-        if metadata.len() as usize != a.data.len() {
+        if metadata.len() != a.data.len() as u64 {
             return "modified";
         }
-        // Legacy documents have no source fingerprint. Same size: compare the bytes once.
+        // No fingerprint (a legacy document), a new time or one too recent to trust: same size,
+        // so compare the bytes.
         match crate::io::read_capped(&path, a.data.len() as u64) {
             Ok(b) if b == *a.data => "ok",
             Ok(_) => "modified",

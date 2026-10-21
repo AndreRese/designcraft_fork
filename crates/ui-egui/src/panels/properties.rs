@@ -2350,7 +2350,7 @@ pub fn links_panel(app: &mut DesignApp, ui: &mut egui::Ui) {
     };
     #[cfg(not(target_arch = "wasm32"))]
     if refresh.checking && rows.is_empty() {
-        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Checking links...")).color(t.text_dim).size(11.0));
+        crate::rtl::label(ui, egui::RichText::new(crate::i18n::tr(&app.ui.language, "Checking links…")).color(t.text_dim).size(11.0));
     }
     #[cfg(not(target_arch = "wasm32"))]
     if refresh.unavailable {

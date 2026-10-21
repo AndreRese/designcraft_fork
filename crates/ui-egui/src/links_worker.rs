@@ -6,8 +6,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Weak};
     use std::time::{Duration, Instant};
     use std::{hash::Hash, hash::Hasher};
 
@@ -65,6 +65,9 @@ mod native {
     struct Done {
         token: u64,
         key: Key,
+        /// Keeps the checked document's allocation, so no later document can reuse the address in
+        /// `key` and pass for it once this one is dropped.
+        pin: Weak<Document>,
         values: Vec<Value>,
         complete: bool,
     }
@@ -78,12 +81,17 @@ mod native {
     type Runner = Box<dyn FnMut(&Snapshot, &mut LinkListChecks) -> Vec<Value> + Send>;
     type Spawn = Box<dyn Fn(egui::Context, Arc<AtomicUsize>) -> Option<Worker> + Send + Sync>;
 
-    /// Counts a worker thread as alive until it ends, however it ends.
-    struct Alive(Arc<AtomicUsize>);
+    /// Counts a worker thread as alive until it ends, however it ends. Its end frees a slot below
+    /// [`MAX_WORKERS`], so the UI is woken to replace a worker it was waiting behind.
+    struct Alive {
+        live: Arc<AtomicUsize>,
+        ctx: egui::Context,
+    }
 
     impl Drop for Alive {
         fn drop(&mut self) {
-            self.0.fetch_sub(1, Ordering::Relaxed);
+            self.live.fetch_sub(1, Ordering::Relaxed);
+            self.ctx.request_repaint();
         }
     }
 
@@ -115,7 +123,7 @@ mod native {
             let (tx, jobs) = std::sync::mpsc::channel::<Job>();
             let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
             live.fetch_add(1, Ordering::Relaxed);
-            let alive = Alive(live);
+            let alive = Alive { live, ctx: ctx.clone() };
             std::thread::Builder::new()
                 .name("designcraft-links".into())
                 .spawn(move || {
@@ -124,13 +132,25 @@ mod native {
                     while let Ok(job) = jobs.recv() {
                         if let Some(preview) = &mut preview {
                             let values = preview(&job.snapshot, &mut checks);
-                            if done_tx.send(Done { token: job.token, key: job.snapshot.key, values, complete: false }).is_err() {
+                            if done_tx
+                                .send(Done {
+                                    token: job.token,
+                                    key: job.snapshot.key,
+                                    pin: Arc::downgrade(&job.snapshot.doc),
+                                    values,
+                                    complete: false,
+                                })
+                                .is_err()
+                            {
                                 break;
                             }
                             ctx.request_repaint();
                         }
                         let values = run(&job.snapshot, &mut checks);
-                        if done_tx.send(Done { token: job.token, key: job.snapshot.key, values, complete: true }).is_err() {
+                        if done_tx
+                            .send(Done { token: job.token, key: job.snapshot.key, pin: Arc::downgrade(&job.snapshot.doc), values, complete: true })
+                            .is_err()
+                        {
                             break;
                         }
                         ctx.request_repaint();
@@ -163,6 +183,8 @@ mod native {
 
     struct Cached {
         key: Key,
+        /// As in [`Done`]: `key` names this document only while its allocation is kept.
+        _pin: Weak<Document>,
         refreshed: Instant,
         refresh_after: Duration,
         values: Arc<Vec<Value>>,
@@ -204,6 +226,7 @@ mod native {
                     if done.key == current_key && (done.complete || !has_completed_rows) {
                         self.cached = Some(Cached {
                             key: done.key,
+                            _pin: done.pin,
                             refreshed: Instant::now(),
                             refresh_after: refresh_after(took),
                             values: Arc::new(done.values),
@@ -345,7 +368,14 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_MIN, refresh_after: REFRESH_MIN, values, complete: true }),
+                cached: Some(Cached {
+                    key,
+                    _pin: Weak::new(),
+                    refreshed: Instant::now() - REFRESH_MIN,
+                    refresh_after: REFRESH_MIN,
+                    values,
+                    complete: true,
+                }),
                 ..Default::default()
             };
 
@@ -385,7 +415,14 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached", "status": "ok"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key, refreshed: Instant::now() - REFRESH_MIN, refresh_after: REFRESH_MIN, values, complete: true }),
+                cached: Some(Cached {
+                    key,
+                    _pin: Weak::new(),
+                    refreshed: Instant::now() - REFRESH_MIN,
+                    refresh_after: REFRESH_MIN,
+                    values,
+                    complete: true,
+                }),
                 ..Default::default()
             };
 
@@ -421,7 +458,14 @@ mod native {
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
             let mut state = State {
                 worker: Some(worker),
-                cached: Some(Cached { key: key(1, 1), refreshed: Instant::now(), refresh_after: REFRESH_MIN, values, complete: true }),
+                cached: Some(Cached {
+                    key: key(1, 1),
+                    _pin: Weak::new(),
+                    refreshed: Instant::now(),
+                    refresh_after: REFRESH_MIN,
+                    values,
+                    complete: true,
+                }),
                 ..Default::default()
             };
 
@@ -508,12 +552,106 @@ mod native {
             let worker = Worker::spawn_with(ctx.clone(), Box::new(|_, _| Vec::new())).unwrap();
             let key = key(1, 1);
             let values = Arc::new(vec![serde_json::json!({"name": "cached"})]);
-            let fresh = |refreshed| Cached { key, refreshed, refresh_after: REFRESH_MIN, values: Arc::clone(&values), complete: true };
+            let fresh =
+                |refreshed| Cached { key, _pin: Weak::new(), refreshed, refresh_after: REFRESH_MIN, values: Arc::clone(&values), complete: true };
             let mut state = State { worker: Some(worker), cached: Some(fresh(Instant::now())), ..Default::default() };
             assert!(!state.rows(&ctx, snapshot(key)).checking, "rows just checked are current");
 
             state.cached = Some(fresh(Instant::now() - REFRESH_MIN));
             assert!(state.rows(&ctx, snapshot(key)).checking, "an external change shows within the interval");
+        }
+
+        #[test]
+        fn a_superseded_worker_that_ends_wakes_the_document_waiting_at_the_limit() {
+            let ctx = egui::Context::default();
+            let repaints = Arc::new(std::sync::Mutex::new(0_usize));
+            let seen = Arc::clone(&repaints);
+            ctx.set_request_repaint_callback(move |_| *seen.lock().unwrap() += 1);
+            // Documents 1 and 2 are on shares that don't answer until released.
+            let (release_1, blocked_1) = std::sync::mpsc::channel::<()>();
+            let (release_2, blocked_2) = std::sync::mpsc::channel::<()>();
+            let blocked = Arc::new(std::sync::Mutex::new((blocked_1, blocked_2)));
+            for release in [release_1.clone(), release_2.clone()] {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(2));
+                    let _ = release.send(());
+                });
+            }
+            let spawn: Spawn = Box::new(move |ctx, live| {
+                let blocked = Arc::clone(&blocked);
+                Worker::spawn_with_preview(
+                    ctx,
+                    live,
+                    None,
+                    Box::new(move |snapshot, _| {
+                        let wait = |rx: &std::sync::mpsc::Receiver<()>| {
+                            let _ = rx.recv();
+                        };
+                        match snapshot.key.uid {
+                            1 => wait(&blocked.lock().unwrap().0),
+                            2 => wait(&blocked.lock().unwrap().1),
+                            _ => {}
+                        }
+                        vec![serde_json::json!({"name": format!("doc {}", snapshot.key.uid)})]
+                    }),
+                )
+            });
+            // Two slots left: document 1's worker, then document 2's, which supersedes it.
+            let mut state = State { spawn: Some(spawn), live: Arc::new(AtomicUsize::new(MAX_WORKERS - 2)), ..Default::default() };
+            state.rows(&ctx, snapshot(key(1, 1)));
+            std::thread::sleep(SUPERSEDE_AFTER);
+            state.rows(&ctx, snapshot(key(2, 1)));
+            std::thread::sleep(SUPERSEDE_AFTER);
+            assert!(state.rows(&ctx, snapshot(key(3, 1))).checking, "document 3 waits at the limit");
+            assert_eq!(state.live.load(Ordering::Relaxed), MAX_WORKERS);
+
+            *repaints.lock().unwrap() = 0;
+            let _ = release_1.send(());
+            let woken = (0..500).any(|_| {
+                std::thread::sleep(Duration::from_millis(2));
+                *repaints.lock().unwrap() > 0 && state.live.load(Ordering::Relaxed) < MAX_WORKERS
+            });
+            let mut rows = state.rows(&ctx, snapshot(key(3, 1)));
+            for _ in 0..500 {
+                if !rows.checking {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+                rows = state.rows(&ctx, snapshot(key(3, 1)));
+            }
+            let _ = release_2.send(());
+
+            assert!(woken, "the ended worker freed its slot and asked for a repaint");
+            assert!(!rows.checking, "document 3 got a worker once a slot was free");
+            assert_eq!(rows.values.first().and_then(|value| value["name"].as_str()), Some("doc 3"));
+        }
+
+        #[test]
+        fn completed_rows_keep_their_documents_address_from_being_reused() {
+            let ctx = egui::Context::default();
+            let worker = Worker::spawn_with(ctx.clone(), Box::new(|_, _| Vec::new())).unwrap();
+            let mut state = State { worker: Some(worker), ..Default::default() };
+            let doc = Arc::new(Document::new(&Default::default()));
+            let key = Key::new(1, &doc, None);
+            let snapshot = || Snapshot { key, doc: Arc::clone(&doc), cache: Arc::new(Cache::new()), document: None };
+            let mut rows = state.rows(&ctx, snapshot());
+            for _ in 0..500 {
+                if !rows.checking {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+                rows = state.rows(&ctx, snapshot());
+            }
+            assert!(!rows.checking, "the check finished");
+            let address = Arc::as_ptr(&doc);
+
+            // Edits replace the document; the old one is dropped once nothing else holds it.
+            drop(doc);
+
+            // A weak reference keeps the allocation, so no later document can be given the address
+            // in `key` while these rows are kept.
+            let pin = state.cached.as_ref().map(|cached| &cached._pin);
+            assert!(pin.is_some_and(|pin| pin.as_ptr() == address && pin.strong_count() == 0), "the rows don't hold their document's allocation");
         }
 
         #[test]
