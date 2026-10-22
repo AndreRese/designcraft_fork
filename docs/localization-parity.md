@@ -43,11 +43,12 @@ come as Middle East editions with an English or French interface and right-to-le
 Percentages are of the 1,724 measured strings, except pt-BR's. A language is `full` only when every user-visible
 string is translated and its script renders and edits correctly; none but English is.
 
-Brazilian Portuguese (2026-10-21): a new count by the same method (every catalog key, engine
-command label and `tr`/`t` literal) finds **2,419 strings** on that day's main. It finds 2,021 on
-the 2026-10-10 code the 1,724 came from, so treat it as its own scale; on it the other percentages
-above overstate today's coverage. `pt_br.rs` translates 2,416 of the 2,419, and the New Document
-unit names, which reach `tr` at run time and no catalog had. Like every other language it leaves
+Brazilian Portuguese (2026-10-21): the 1,724 strings were counted at `a127c6d5` (#355). Recounting
+that commit by the same rule (every catalog key, engine command label and `tr`/`t` literal, less
+the language codes tests pass to `tr`) gives 1,723, with pt-BR at the same 1,057. The rule gives
+**2,419 strings** at main `438d7b6d` (#1537), so the other percentages above overstate today's
+coverage. `pt_br.rs` translates 2,416 of the 2,419, and the New Document unit names, which reach
+`tr` at run time and no catalog had. Like every other language it leaves
 the Control panel's `IT`, `VA` and `Y:` captions in English. Tools are named "Ferramenta …", parent
 pages "página principal" and stories "artigo"; each menu path is made of the menu names, which a
 test checks. The 634 new strings were AI-drafted and approved by the contributor; they are not yet
@@ -67,9 +68,10 @@ craft-fonts. The language totals above retain their dated measurement; this is a
 | Italian | it | 1,464 (85%) | partial |
 | Ukrainian | uk | 1,432 (83%), plural categories handled | partial |
 | Polish | pl | 1,717 (99%), count captions category-first; AI-drafted, awaiting native review | partial |
+| Russian | ru | 1,705 of the 2,419 counted at `438d7b6d` (70%, 2026-10-21), count captions category-first | partial |
 | Georgian | ka | 1,724 (~100%: every catalog key plus the command labels the others lack), count captions as `noun: n` | partial (reviewed by a native speaker) |
 
-DesignCraft ships **5** interface languages beyond the twelve; InDesign ships 17 beyond its
+DesignCraft ships **6** interface languages beyond the twelve; InDesign ships 17 beyond its
 eight of the twelve (cs, da, el, en_GB, fi, hu, it, nb, nl, pl, ro, ru, sq, sv, tr, uk, zh_TW).
 
 ## Document languages
@@ -96,7 +98,7 @@ locale shaping. See [typography-parity.md](typography-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-21 | minor | pt-BR catalog filled (634 strings and the unit names) and re-measured: 2,416 of 2,419 strings; pt-BR to full 8–12 → 1–2 h; dimension estimates unchanged |
+| 2026-10-21 | minor | pt-BR catalog filled (634 strings and the unit names) and re-measured at `438d7b6d`: 2,416 of 2,419 strings; the 1,724 baseline traced to `a127c6d5`; Russian (`ru`, 1,705) listed, six languages beyond the twelve; pt-BR to full 8–12 → 1–2 h; dimension estimates unchanged |
 | 2026-10-11 | minor | Localized Japanese print, import and table controls; checked Japanese and English renders |
 | 2026-10-14 | minor | Georgian (`ka`) interface added |
 | 2026-10-10 | major | Created: catalogs measured (1,724 strings), the twelve key languages plus Italian and Ukrainian |

@@ -317,8 +317,7 @@ Interface strings translated, of 1,724 measured (pt-BR: of 2,419, re-measured 20
 | Korean | ko | none | 0% |
 | Vietnamese | vi | none | 0% |
 
-Also shipped: Czech (99%), Italian (85%), Ukrainian (83%), Polish (99%).
-Also shipped: Italian (85%), Ukrainian (83%), Georgian (100%).
+Also shipped: Czech (99%), Italian (85%), Ukrainian (83%), Polish (99%), Georgian (100%), Russian (70% of 2,419).
 
 ## Upcoming
 
