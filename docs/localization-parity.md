@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (Polish and Georgian interfaces; catalog counts remain the 2026-10-10 measurement) · **Target:** Adobe InDesign 2026 (21.6)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-21 · **Change:** minor (pt-BR catalog filled and re-measured; the other catalog counts remain the 2026-10-10 measurement) · **Target:** Adobe InDesign 2026 (21.6)
 
 Per-language status of the DesignCraft interface and of document typesetting in each script.
 Script-specific typesetting detail: [cjk.md](cjk.md), [cjk-typography.md](cjk-typography.md),
@@ -33,15 +33,26 @@ come as Middle East editions with an English or French interface and right-to-le
 | Hindi | hi | ✗ | 0 (0%) | none | Devanagari shaped by harfrust in documents but untested; no Hindi hyphenation or spelling | no | none | 20–30 |
 | Arabic | ar | Middle East edition (English/French UI) | 1,459 (85%) | menus, panels, most dialogs; no help | RTL UI text (`rtl.rs`: bidi + shaping); Arabic composition, kashida, digits, RTL stories and tables ✓ (arabic-typography.md); list bullets and multi-column RTL open (#100) | no | partial | 15–25 |
 | French | fr | ✓ | 1,438 (83%) | menus, panels, most dialogs; no help | Latin ✓; no French hyphenation | no | partial | 6–10 |
-| Portuguese (Brazil) | pt-br | ✓ (pt) | 1,057 (61%) | menus, panels, some dialogs; no help | Latin ✓; Portuguese hyphenation ✓ | no | partial | 8–12 |
+| Portuguese (Brazil) | pt-br | ✓ (pt) | 2,416 / 2,419 (~100%, 2026-10-21) | whole interface but the Control panel's `IT`, `VA` and `Y:` captions; no help | Latin ✓; Portuguese hyphenation ✓ | no | partial | 1–2 |
 | Indonesian | id | ✗ | 0 (0%) | none | Latin ✓ | no | none | 12–18 |
 | Japanese | ja | ✓ | 1,644 (95%) | whole interface (#272), vertical-type commands; no help | vertical text, kinsoku, aki, ruby, warichu ✓ (partial depth, cjk.md); canvas IME ✓, not checked by hand (#322); Japanese UI and Mincho fonts from craft-fonts | no | partial | 6–10 (+ IME checks, shared with zh) |
 | German | de | ✓ | 1,438 (83%) | menus, panels, most dialogs; no help | Latin ✓; no German hyphenation (InDesign ships 2006 reform patterns) | no | partial | 6–10 |
 | Korean | ko | ✓ | 0 (0%) | none | Korean line breaking at spaces ✓; canvas IME ✓, not checked by hand (#322) | no | none | 15–25 |
 | Vietnamese | vi | ✗ | 0 (0%) | none | Latin with stacked diacritics via harfrust, untested | no | none | 12–18 |
 
-Percentages are of the 1,724 measured strings. A language is `full` only when every user-visible
+Percentages are of the 1,724 measured strings, except pt-BR's. A language is `full` only when every user-visible
 string is translated and its script renders and edits correctly; none but English is.
+
+Brazilian Portuguese (2026-10-21): a new count by the same method (every catalog key, engine
+command label and `tr`/`t` literal) finds **2,419 strings** on that day's main. It finds 2,021 on
+the 2026-10-10 code the 1,724 came from, so treat it as its own scale; on it the other percentages
+above overstate today's coverage. `pt_br.rs` translates 2,416 of the 2,419, and the New Document
+unit names, which reach `tr` at run time and no catalog had. Like every other language it leaves
+the Control panel's `IT`, `VA` and `Y:` captions in English. Tools are named "Ferramenta …", parent
+pages "página principal" and stories "artigo"; each menu path is made of the menu names, which a
+test checks. The 634 new strings were AI-drafted and approved by the contributor; they are not yet
+checked in the running app, and a native-speaker review is pending. Older rows still use
+"página-pai" and "página mestra" for parent pages and "Matéria" for a story.
 
 Japanese follow-up (2026-10-11): print ranges, imported style handling, the built-in `(import)`
 caption, table row/column movement and row-height distribution now use the existing translation
@@ -73,7 +84,7 @@ locale shaping. See [typography-parity.md](typography-parity.md).
 | Work | Opus 5.5 h |
 |---|---|
 | Fill the 83–85% catalogs (de, fr, es, zh, ar, it, uk; ~290 strings each) | 25–40 |
-| pt-BR to full | 8–12 |
+| pt-BR to full: check it in the running app; one term each for parent page and story | 1–2 |
 | New: Hindi, Indonesian, Korean, Vietnamese (1,724 strings, plural rules, tests) | 50–75 |
 | Canvas IME (zh, ja, ko): checks by hand with system IMEs, and fixes | 10–20 |
 | CJK UI font in every release build; Devanagari and Vietnamese rendering tests | 10–15 |
@@ -85,6 +96,7 @@ locale shaping. See [typography-parity.md](typography-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | pt-BR catalog filled (634 strings and the unit names) and re-measured: 2,416 of 2,419 strings; pt-BR to full 8–12 → 1–2 h; dimension estimates unchanged |
 | 2026-10-11 | minor | Localized Japanese print, import and table controls; checked Japanese and English renders |
 | 2026-10-14 | minor | Georgian (`ka`) interface added |
 | 2026-10-10 | major | Created: catalogs measured (1,724 strings), the twelve key languages plus Italian and Ukrainian |

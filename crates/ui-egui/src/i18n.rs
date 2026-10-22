@@ -4777,6 +4777,42 @@ mod tests {
     }
 
     #[test]
+    fn brazilian_portuguese_catalog_keeps_placeholders_endings_and_menu_names() {
+        let catalog: HashMap<_, _> = pt_br::TABLE.iter().copied().collect();
+        let placeholders = |s: &str| {
+            let mut names = s.split('{').skip(1).filter_map(|part| part.split_once('}').map(|(name, _)| name.to_owned())).collect::<Vec<_>>();
+            names.sort();
+            names
+        };
+        for (key, translation) in pt_br::TABLE {
+            assert!(!translation.trim().is_empty(), "empty {key}");
+            assert_eq!(placeholders(key), placeholders(translation), "placeholders: {key}");
+            assert_eq!(key.starts_with(' '), translation.starts_with(' '), "leading space: {key}");
+            assert_eq!(key.ends_with(' '), translation.ends_with(' '), "trailing space: {key}");
+            assert_eq!(key.ends_with('…'), translation.ends_with('…'), "ellipsis: {key}");
+        }
+        // Edit › Menus shows submenu paths: each one reads as the menu names it is made of.
+        let menus = ["File", "Edit", "Layout", "Type", "Object", "Table", "View", "Window", "Help"];
+        for (key, translation) in pt_br::TABLE {
+            let parts: Vec<_> = key.split('/').collect();
+            if parts.len() < 2 || !menus.contains(&parts[0]) {
+                continue;
+            }
+            let names: Vec<_> = parts.iter().map(|p| catalog.get(p).copied().unwrap_or(*p)).collect();
+            assert_eq!(*translation, names.join("/"), "menu path: {key}");
+        }
+        assert_eq!(tr("pt-br", "Object/Paths"), "Objeto/Caminhos");
+        assert_eq!(tr("pt-br", "Direct Selection Tool"), "Ferramenta Seleção direta");
+        assert_eq!(tr("pt-br", "Em Dash"), "Travessão");
+        // Warichu's line spacing is not the paragraph's leading.
+        assert_ne!(tr("pt-br", "Line Spacing:"), tr("pt-br", "Leading:"));
+        // File › New lists every unit in Portuguese.
+        for unit in ["Points", "Picas", "Inches", "Millimeters", "Centimeters", "Ciceros", "Agates"] {
+            assert_ne!(tr("pt-br", unit), unit);
+        }
+    }
+
+    #[test]
     fn georgian_catalog_preserves_placeholders_and_counts() {
         let catalog: HashMap<_, _> = ka::TABLE.iter().copied().collect();
         assert_eq!(catalog.len(), ka::TABLE.len(), "duplicate Georgian keys");

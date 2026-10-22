@@ -300,7 +300,7 @@ measured); Ready estimated.
 
 ## Languages
 
-Interface strings translated, of 1,724 measured. Detail: [docs/localization-parity.md](docs/localization-parity.md).
+Interface strings translated, of 1,724 measured (pt-BR: of 2,419, re-measured 2026-10-21). Detail: [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | Status | Translated |
 |---|---|---|---|
@@ -310,7 +310,7 @@ Interface strings translated, of 1,724 measured. Detail: [docs/localization-pari
 | Hindi | hi | none | 0% |
 | Arabic | ar | partial (RTL UI and composition) | 85% |
 | French | fr | partial | 83% |
-| Portuguese (Brazil) | pt-br | partial | 61% |
+| Portuguese (Brazil) | pt-br | partial | ~100% |
 | Indonesian | id | none | 0% |
 | Japanese | ja | partial | 95% |
 | German | de | partial | 83% |
@@ -349,6 +349,7 @@ list) · [roadmap.md](docs/roadmap.md) (milestones, plan) · [parity-checklist.m
 Newest first.
 
 - **2026-10-22** · Paragraph rules: Rule Above's offset is measured from the first line's baseline to the rule's bottom edge, as in InDesign. Rules sat one ascent too high and crossed the previous paragraph's text (reported from an imported INDD document). No readiness percentage change.
+- **2026-10-21** · Interface Language › Português (Brasil) translates the whole interface: 634 strings the catalog lacked (tool names, Edit › Menus paths, the Japanese typesetting dialogs, special characters, Load Styles, Data Merge, Preflight, font replacement, About) and File › New's unit names. Re-measured, pt-BR covers 2,416 of 2,419 strings (61% before); only the Control panel's `IT`, `VA` and `Y:` captions stay English, as in every language. A test keeps placeholders, endings and menu paths consistent. No readiness percentage change.
 - **2026-10-16** · Type › Reload Fonts (`font.reload`): fonts installed, edited or removed while DesignCraft runs are read again without a restart, and the open documents recompose with them (#328, #547). An edited font file is noticed by its length and modification time; bundled, added and document fonts stay as they are. InDesign does this by itself, so noticing changes automatically is still open (gap 6). No readiness percentage change.
 - **2026-10-16** · Parents can be deleted from their Pages-panel context menu or `layout.parents.delete {id}`. Applied-page and based-on references are cleared, local override copies survive, and Undo restores the parent. Addresses the deletion portion of #956; no readiness percentage change.
 - **2026-10-17** · File › Package writes the document's and the IDML's links relative to the package (`Links/logo.png`, `file:Links/logo.png`), so a package holds no path from the machine that made it; opening a document resolves them to the files beside it. Links › Copy Link(s) To still links by full path. (#340). No readiness percentage change.
