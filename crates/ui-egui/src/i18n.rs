@@ -4973,6 +4973,9 @@ mod tests {
             "the default printer",
             "{name}: import cancelled while a dialog is open; choose the file again",
             "{name}: {count} step(s) done",
+            // Edit › Keyboard Shortcuts imports a set saved by InDesign.
+            "Import InDesign Set…",
+            "Imported {count} shortcuts from “{set}”; {unmatched} items not matched, {unreadable} unreadable.",
         ]);
         keys
     }
