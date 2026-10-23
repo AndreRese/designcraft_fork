@@ -135,8 +135,9 @@ impl OutputRoot {
         {
             use std::os::unix::fs::PermissionsExt;
 
-            // Match fs::write for a new output: 0666 restricted by the caller's umask.
-            builder.permissions(std::fs::Permissions::from_mode(0o666));
+            // Like fs::write for a new output: request 0666 and let the process umask decide the
+            // effective mode (0644 with the usual 022, 0664 with 002).
+            builder.permissions(std::fs::Permissions::from_mode(0o666)); // NOSONAR
         }
         let file = builder.tempfile_in(parent).map_err(|e| path_error(path, e))?;
         #[cfg(unix)]

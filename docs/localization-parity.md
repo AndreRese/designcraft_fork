@@ -50,9 +50,10 @@ the language codes tests pass to `tr`) gives 1,723, with pt-BR at the same 1,057
 coverage. `pt_br.rs` translates 2,416 of the 2,419, and the New Document unit names, which reach
 `tr` at run time and no catalog had. Like every other language it leaves
 the Control panel's `IT`, `VA` and `Y:` captions in English. Tools are named "Ferramenta …", parent
-pages "página principal" and stories "artigo"; each menu path is made of the menu names, which a
-test checks. The 634 new strings were AI-drafted and approved by the contributor; they are not yet
-checked in the running app, and a native-speaker review is pending. Older rows still use
+pages "página principal" and stories "artigo"; each menu path is made of the menu names. The
+shared catalog test checks the placeholders, padding, ellipses and colons. The 634 new
+strings were AI-drafted and approved by the contributor; they are not yet checked in the running
+app, and a native-speaker review is pending. Older rows still use
 "página-pai" and "página mestra" for parent pages and "Matéria" for a story.
 
 Japanese follow-up (2026-10-11): print ranges, imported style handling, the built-in `(import)`

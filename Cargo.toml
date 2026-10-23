@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/designcraft", "apps/designcraft-cli", "xtask"]
 
 [workspace.package]
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -103,11 +103,16 @@ todo = "warn"
 too_many_arguments = "allow"
 type_complexity = "allow"
 
+# Line tables keep file and line in panics and backtraces; full debug info
+# for every test binary and dependency would multiply the target dir size.
+# The test profile inherits both settings.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.release]
 opt-level = 3
